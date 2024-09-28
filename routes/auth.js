@@ -6,6 +6,12 @@ const auth = require('../middleware/auth')
 
 const router = express.Router();
 
+const blacklistedTokens = new Set();
+const addToBlacklist = (token) => {
+  blacklistedTokens.add(token);
+};
+const isBlacklisted = (token) => blacklistedTokens.has(token);
+
 const generateTokens = (user) => {
   const accessToken = jwt.sign(user, process.env.JWT_SECRET, {
     expiresIn: '10m',
@@ -57,8 +63,51 @@ router.post('/signin/new_token', (req, res) => {
 });
 
 router.get('/logout', (req, res) => {
-  res.sendStatus(204);
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ message: 'Токен не найден' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  try {
+    const decoded = jwt.decode(token);
+
+    if (!decoded) {
+      return res.status(401).json({ message: 'Невалидный токен' });
+    }
+
+    addToBlacklist(token);
+
+    res.sendStatus(204);
+  } catch (error) {
+    console.error('Ошибка при выходе:', error);
+    res.status(500).json({ message: 'Ошибка сервера' });
+  }
 });
+
+const auth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ message: 'Неавторизован' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  if (isBlacklisted(token)) {
+    return res.status(403).json({ message: 'Токен заблокирован' });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ message: 'Невалидный токен' });
+  }
+};
 
 router.get('/info', auth, (req, res) => {
   res.json({ id: req.user.id });
